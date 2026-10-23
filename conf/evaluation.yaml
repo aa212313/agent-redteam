@@ -1,0 +1,23 @@
+# 评测配置
+max_steps: 6
+benign_task: cases/benign.yaml
+
+# 矩阵评测里要跑的防御组合（可增删）
+matrix:
+  baseline:            # 全关：拿到脆弱面
+    isolation: false
+    allowlist: false
+    params: false
+    gate: false
+    filter: false
+  hardened:            # 全开
+    isolation: true
+    allowlist: true
+    params: true
+    gate: true
+    filter: true
+
+outputs:
+  reports: reports
+  db: reports/runs.db
+  web_data: web/data.js

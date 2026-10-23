@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Agent 安全靶场 · 评测看板</title>
+<style>
+*,*::before,*::after{box-sizing:border-box}
+:root{
+  --bg:#f6f7f9;--card:#fff;--line:#e5e8ec;--ink:#161a20;--muted:#66707e;--faint:#9aa4b1;
+  --acc:#0f766e;--acc-soft:#e9f5f3;--bad:#c02a3a;--bad-soft:#fdeff1;--warn:#b45309;--warn-soft:#fdf4e7;
+  --mono:ui-monospace,Consolas,"SF Mono",monospace;
+}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:-apple-system,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;font-size:14px;line-height:1.7}
+.wrap{max-width:1080px;margin:0 auto;padding:26px 22px 50px}
+header{display:flex;align-items:flex-end;gap:14px;flex-wrap:wrap;margin-bottom:6px}
+h1{font-size:21px;margin:0;letter-spacing:-.01em}
+.sub{color:var(--muted);font-size:12.5px}
+.chips{display:flex;gap:6px;margin-left:auto;flex-wrap:wrap}
+.chip{font-family:var(--mono);font-size:11.5px;border:1px solid var(--line);background:#fff;color:var(--muted);padding:3px 9px;border-radius:6px}
+.chip b{color:var(--ink)}
+.warn{margin:14px 0 18px;border:1px solid #f0d9b5;background:var(--warn-soft);color:#7a5312;border-radius:10px;padding:11px 14px;font-size:12.8px}
+.warn b{color:#6b4610}
+.kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin:16px 0 20px}
+.kpi{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px 16px}
+.kpi .v{font-family:var(--mono);font-size:26px;font-weight:700;letter-spacing:-.02em}
+.kpi .k{color:var(--muted);font-size:12px;margin-top:2px}
+.kpi.good .v{color:var(--acc)}
+.kpi.bad .v{color:var(--bad)}
+section{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:18px 20px;margin-bottom:16px}
+section h2{font-size:14.5px;margin:0 0 4px}
+section .note{color:var(--muted);font-size:12px;margin-bottom:14px}
+table{width:100%;border-collapse:collapse;font-size:12.8px}
+th{text-align:left;color:var(--muted);font-weight:600;font-size:11.5px;padding:7px 10px;border-bottom:1px solid var(--line)}
+td{padding:7px 10px;border-bottom:1px solid var(--line);font-variant-numeric:tabular-nums}
+tr:last-child td{border-bottom:none}
+td.mono,.mono{font-family:var(--mono)}
+.bar{height:7px;border-radius:4px;background:var(--acc);display:inline-block;vertical-align:middle}
+.bar.badb{background:var(--bad)}
+.tag{display:inline-block;font-family:var(--mono);font-size:11px;padding:1px 7px;border-radius:4px;border:1px solid var(--line);color:var(--muted)}
+.tag.hit{color:var(--bad);border-color:#f0c3c9;background:var(--bad-soft)}
+.tag.safe{color:var(--acc);border-color:#bfe0da;background:var(--acc-soft)}
+.tag.row{white-space:nowrap}
+.toolbar{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px;align-items:center}
+.toolbar button{border:1px solid var(--line);background:#fff;color:var(--muted);font:inherit;font-size:12px;padding:4px 10px;border-radius:6px;cursor:pointer}
+.toolbar button.on{background:var(--ink);border-color:var(--ink);color:#fff}
+.cases{max-height:420px;overflow:auto;border:1px solid var(--line);border-radius:10px}
+.cases table th{position:sticky;top:0;background:#fff}
+.foot{color:var(--faint);font-size:11.8px;text-align:center;margin-top:18px;line-height:1.9}
+.empty{color:var(--faint);font-size:12.5px;padding:10px 0}
+@media (max-width:800px){.kpis{grid-template-columns:repeat(2,1fr)}.wrap{padding:18px 14px 40px}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div>
+      <h1>Agent 安全靶场 · 评测看板</h1>
+      <div class="sub" id="sub">加载中…</div>
+    </div>
+    <div class="chips" id="chips"></div>
+  </header>
+
+  <div class="warn" id="warn" hidden></div>
+
+  <div class="kpis" id="kpis"></div>
+
+  <section>
+    <h2>一、各配置的攻击成功率</h2>
+    <div class="note">ASR = 命中断言的攻击用例 / 该配置下攻击用例总数。baseline 是防御全关，hardened 是全开，no_* 是去掉某一层。</div>
+    <table id="cfgTable"></table>
+  </section>
+
+  <section>
+    <h2>二、分类型对比</h2>
+    <div class="note">同一批用例在不同攻击面上的表现——降幅大说明该类攻击主要被哪一层兜住。</div>
+    <table id="typeTable"></table>
+  </section>
+
+  <section>
+    <h2>三、逐层边际</h2>
+    <div class="note">去掉这一层后 ASR 上升多少。接近 0 表示该层在这套用例里没有独立贡献——这本身就是一个结论。</div>
+    <table id="margTable"></table>
+  </section>
+
+  <section>
+    <h2>四、用例明细</h2>
+    <div class="note">点击筛选查看每条用例在 baseline / hardened 下的结果。</div>
+    <div class="toolbar" id="filters"></div>
+    <div class="cases"><table id="caseTable"></table></div>
+  </section>
+
+  <div class="foot">
+    数据由 <span class="mono">python -m app.runner.evaluate</span> 生成（reports/summary.json → web/data.js），不接受手填。<br>
+    口径与已知局限见 <span class="mono">reports/bench.md</span> 与 <span class="mono">docs/评测口径.md</span>。
+  </div>
+</div>
+
+<script src="data.js"></script>
+<script>
+(function () {
+  var D = window.DATA;
+  var $ = function (id) { return document.getElementById(id); };
+  if (!D) { $('sub').textContent = '缺少 data.js：先运行 python -m app.runner.evaluate'; return; }
+  var M = D.meta, C = D.configs;
+
+  $('sub').textContent = '生成于 ' + M.generated_at + ' · ' + M.attack_cases + ' 条攻击用例 / ' + M.benign_cases + ' 条正常任务 · 总耗时 ' + M.wall_seconds + 's';
+  $('chips').innerHTML = [
+    ['provider', M.provider], ['engine', M.engine],
+    ['用例', M.attack_cases + '+' + M.benign_cases]
+  ].map(function (x) { return '<span class="chip">' + x[0] + ' <b>' + x[1] + '</b></span>'; }).join('');
+
+  if (M.scripted_warning) {
+    $('warn').hidden = false;
+    $('warn').innerHTML = '<b>当前结果来自脚本模型（provider=scripted）</b>：它把 7B 级模型的常见失效方式写成确定性规则，用来验证评测链路与各层防御的贡献，<b>不代表真实模型的攻击成功率</b>。接真模型重跑：<span class="mono">python -m app.runner.evaluate --provider ollama</span> 或 <span class="mono">--provider deepseek</span>。';
+  }
+
+  var base = C.baseline || {}, hard = C.hardened || {};
+  var drop = (base.asr || 0) - (hard.asr || 0);
+  $('kpis').innerHTML = [
+    { k: '防御全关 ASR', v: (base.asr || 0).toFixed(1) + '%', cls: 'bad', s: (base.attack_success || 0) + '/' + (base.attack_total || 0) },
+    { k: '防御全开 ASR', v: (hard.asr || 0).toFixed(1) + '%', cls: 'good', s: (hard.attack_success || 0) + '/' + (hard.attack_total || 0) },
+    { k: 'ASR 降幅', v: '-' + drop.toFixed(1) + ' pp', cls: 'good', s: '全开 vs 全关' },
+    { k: '正常任务误杀', v: (100 - (hard.benign_pass_rate || 0)).toFixed(1) + '%', cls: 'good', s: (hard.benign_passed || 0) + '/' + (hard.benign_total || 0) + ' 通过' }
+  ].map(function (k) {
+    return '<div class="kpi ' + k.cls + '"><div class="v">' + k.v + '</div><div class="k">' + k.k + ' · ' + k.s + '</div></div>';
+  }).join('');
+
+  var order = ['baseline', 'hardened', 'no_isolation', 'no_allowlist', 'no_params', 'no_gate', 'no_filter'];
+  var rows = order.filter(function (k) { return C[k]; });
+  $('cfgTable').innerHTML = '<thead><tr><th>配置</th><th>ASR</th><th style="width:38%">分布</th><th>正常通过</th><th>拦截次数</th><th>脱敏</th><th>平均耗时</th></tr></thead><tbody>' +
+    rows.map(function (k) {
+      var d = C[k], pct = d.asr, bad = k !== 'hardened' && pct > 5;
+      return '<tr><td class="mono">' + k + '</td><td><b>' + pct.toFixed(1) + '%</b> <span class="chip">' + d.attack_success + '/' + d.attack_total + '</span></td>' +
+        '<td><span class="bar ' + (bad ? 'badb' : '') + '" style="width:' + Math.max(2, pct) + '%"></span></td>' +
+        '<td>' + d.benign_pass_rate.toFixed(1) + '%</td><td>' + Object.keys(d.blocks).reduce(function (s, x) { return s + d.blocks[x]; }, 0) + '</td>' +
+        '<td>' + d.masked + '</td><td class="mono">' + d.avg_ms + ' ms</td></tr>';
+    }).join('') + '</tbody>';
+
+  var types = Object.keys(base.per_type || {});
+  $('typeTable').innerHTML = '<thead><tr><th>类型</th><th>全关</th><th>全开</th><th>降幅</th><th style="width:34%">全开剩余</th></tr></thead><tbody>' +
+    types.map(function (t) {
+      var b = base.per_type[t], h = (hard.per_type || {})[t] || { asr: 0, success: 0, total: 0 };
+      return '<tr><td class="mono">' + t + '</td><td>' + b.asr.toFixed(1) + '% <span class="chip">' + b.success + '/' + b.total + '</span></td>' +
+        '<td>' + h.asr.toFixed(1) + '%</td><td>-' + (b.asr - h.asr).toFixed(1) + ' pp</td>' +
+        '<td><span class="bar" style="width:' + Math.max(1, h.asr) + '%"></span></td></tr>';
+    }).join('') + '</tbody>';
+
+  $('margTable').innerHTML = '<thead><tr><th>防御层</th><th>全开 ASR</th><th>去掉后 ASR</th><th>边际</th><th style="width:30%"></th></tr></thead><tbody>' +
+    (D.marginal || []).map(function (m) {
+      return '<tr><td>' + m.name + '</td><td>' + m.asr_with.toFixed(1) + '%</td><td>' + m.asr_without.toFixed(1) + '%</td>' +
+        '<td><b>' + (m.delta > 0 ? '+' : '') + m.delta.toFixed(1) + ' pp</b></td>' +
+        '<td><span class="bar ' + (m.delta > 0 ? '' : 'badb') + '" style="width:' + Math.min(100, Math.abs(m.delta) * 3 + 2) + '%"></span></td></tr>';
+    }).join('') + '</tbody>';
+
+  var filter = 'all';
+  var filters = ['all'].concat(types);
+  $('filters').innerHTML = filters.map(function (f) {
+    return '<button data-f="' + f + '" class="' + (f === 'all' ? 'on' : '') + '">' + (f === 'all' ? '全部' : f) + '</button>';
+  }).join('');
+  $('filters').addEventListener('click', function (e) {
+    var btn = e.target.closest('button');
+    if (!btn) return;
+    filter = btn.dataset.f;
+    Array.prototype.forEach.call(this.querySelectorAll('button'), function (b) { b.classList.toggle('on', b === btn); });
+    renderCases();
+  });
+
+  function renderCases() {
+    var list = (D.cases || []).filter(function (c) { return filter === 'all' || c.type === filter; });
+    $('caseTable').innerHTML = '<thead><tr><th>用例</th><th>类型</th><th>标题</th><th>全关</th><th>全开</th></tr></thead><tbody>' +
+      list.map(function (c) {
+        var b = c.results.baseline, h = c.results.hardened;
+        return '<tr><td class="mono">' + c.id + '</td><td class="mono">' + c.type + '</td><td>' + c.title + '</td>' +
+          '<td>' + (b ? '<span class="tag hit row">HIT</span>' : '<span class="tag safe row">safe</span>') + '</td>' +
+          '<td>' + (h ? '<span class="tag hit row">HIT</span>' : '<span class="tag safe row">safe</span>') + '</td></tr>';
+      }).join('') + '</tbody>';
+  }
+  renderCases();
+})();
+</script>
+</body>
+</html>

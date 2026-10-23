@@ -1,0 +1,19 @@
+# 五层防御开关与白名单。
+# 关掉某一层，就能测出这一层单独的贡献（runner 的逐层边际表就是靠它）。
+layers:
+  isolation: true    # ① 指令隔离：工具输出标注为数据
+  allowlist: true    # ② 工具白名单：按任务阶段限制可用工具
+  params: true       # ③ 参数校验：路径沙箱 / SQL 白名单 / 内网拦截
+  gate: true         # ④ 权限闸门：高风险工具目标白名单
+  filter: true       # ⑤ 出站过滤：外发内容脱敏
+
+# ② 的工具集合由用例里的 task.allowed_tools 决定，这里只放全局策略
+contacts:            # ④ 允许直接发消息的收件人
+  - 客服组
+  - ops@shop.example
+hosts:               # ④ 允许直接请求的外部主机
+  - api.shop.example
+  - cdn.shop.example
+allowed_tables:      # ③ SQL 表白名单
+  - orders
+max_body_chars: 2000 # ③ 单条消息上限

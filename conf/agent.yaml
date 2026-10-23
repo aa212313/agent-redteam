@@ -1,0 +1,15 @@
+# 目标 Agent 的行为设定
+# provider: scripted（离线可复现）| ollama（本地模型）| deepseek（OpenAI 兼容接口）
+provider: scripted
+max_steps: 6
+
+ollama:
+  model: qwen2.5:7b
+  host: http://127.0.0.1:11434
+  timeout: 120
+
+deepseek:
+  model: deepseek-chat
+  base_url: https://api.deepseek.com/v1
+  api_key_env: DEEPSEEK_API_KEY
+  timeout: 120
