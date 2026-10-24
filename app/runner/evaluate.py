@@ -12,7 +12,9 @@ from __future__ import annotations
 import argparse
 import json
 import runpy
+import threading
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from pathlib import Path
 
@@ -57,6 +59,8 @@ def main() -> None:
     parser.add_argument("--engine", default="auto", choices=["auto", "langgraph", "linear"])
     parser.add_argument("--limit", type=int, default=0, help="每个类型只跑前 N 条（冒烟用）")
     parser.add_argument("--no-store", action="store_true", help="不写 SQLite")
+    parser.add_argument("--workers", type=int, default=1, help="并发用例数（远程模型建议 6-10）")
+    parser.add_argument("--timeout", type=int, default=0, help="单次模型调用超时秒数")
     args = parser.parse_args()
 
     ensure_runtime_dirs()
@@ -67,6 +71,8 @@ def main() -> None:
     kwargs = cfg.provider_kwargs()
     if args.model:
         kwargs["model"] = args.model
+    if args.timeout:
+        kwargs["timeout"] = args.timeout
     provider = get_provider(provider_name, **kwargs)
     system = load_prompt("agent_system")
 
@@ -96,50 +102,70 @@ def main() -> None:
     )
 
     store = None if args.no_store else Store(cfg.evaluation.db_path)
+    lock = threading.Lock()
     records: list[dict] = []
     started = time.perf_counter()
+    total_jobs = len(configs) * (len(attacks) + len(benign))
+    done_jobs = 0
 
-    for config_name, overrides in configs.items():
+    def run_job(config_name: str, overrides: dict, case: dict) -> dict:
+        # 每个 job 用独立防御栈：blocks 不能跨线程共享
         stack = DefenseStack(cfg.defense, overrides)
-        for case in attacks:
-            run = run_case(case, stack, provider, system, cfg.evaluation.max_steps, config_name, args.engine)
-            verdict = judge_run(case, run)
-            record = {
-                "config": config_name,
-                "case_id": run.case_id,
-                "case_type": run.case_type,
-                "title": run.title,
-                "success": verdict.success,
-                "reason": verdict.reason,
-                "elapsed_ms": run.elapsed_ms,
-                "blocks": run.blocks,
-                "masked": run.masked,
-                "iterations": run.iterations,
-            }
-            records.append(record)
-            if store:
-                store.add(run, verdict.success)
-            log.info("%-10s %-11s %-4s %s", config_name, run.case_id, "HIT" if verdict.success else "safe", run.title)
-        for case in benign:
-            run = run_case(case, stack, provider, system, cfg.evaluation.max_steps, config_name, args.engine)
+        run = run_case(case, stack, provider, system, cfg.evaluation.max_steps, config_name, args.engine)
+        is_benign = case.get("type") == "benign"
+        if is_benign:
             ok, reason = benign_ok(case, run)
-            records.append(
-                {
+        else:
+            verdict = judge_run(case, run)
+            ok, reason = verdict.success, verdict.reason
+        record = {
+            "config": config_name,
+            "case_id": run.case_id,
+            "case_type": run.case_type,
+            "title": run.title,
+            "success": False if is_benign else ok,
+            "benign_ok": ok if is_benign else None,
+            "reason": reason,
+            "elapsed_ms": run.elapsed_ms,
+            "blocks": run.blocks,
+            "masked": run.masked,
+            "iterations": run.iterations,
+        }
+        if store:
+            with lock:
+                store.add(run, record["success"], record["benign_ok"])
+        return record
+
+    jobs = [(name, ov, case) for name, ov in configs.items() for case in attacks + benign]
+    with ThreadPoolExecutor(max_workers=max(1, args.workers)) as pool:
+        futures = {pool.submit(run_job, name, ov, case): (name, case) for name, ov, case in jobs}
+        for fut in as_completed(futures):
+            config_name, case = futures[fut]
+            try:
+                record = fut.result()
+            except Exception as exc:  # noqa: BLE001 单条失败不拖垮整批
+                record = {
                     "config": config_name,
-                    "case_id": run.case_id,
-                    "case_type": "benign",
-                    "title": run.title,
+                    "case_id": case["id"],
+                    "case_type": case.get("type", "unknown"),
+                    "title": case.get("title", ""),
                     "success": False,
-                    "benign_ok": ok,
-                    "reason": reason,
-                    "elapsed_ms": run.elapsed_ms,
-                    "blocks": run.blocks,
-                    "masked": run.masked,
-                    "iterations": run.iterations,
+                    "benign_ok": False if case.get("type") == "benign" else None,
+                    "reason": f"运行异常：{type(exc).__name__}: {exc}",
+                    "elapsed_ms": 0,
+                    "blocks": [],
+                    "masked": 0,
+                    "iterations": 0,
                 }
-            )
-            if store:
-                store.add(run, False, ok)
+            records.append(record)
+            done_jobs += 1
+            if record.get("success"):
+                flag = "HIT "
+            elif record.get("benign_ok"):
+                flag = "ok  "
+            else:
+                flag = "safe"
+            log.info("[%d/%d] %-11s %-4s %s %s", done_jobs, total_jobs, config_name, record["case_id"], flag, record.get("title", ""))
 
     if store:
         store.close()

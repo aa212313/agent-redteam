@@ -111,8 +111,16 @@ def load_config() -> AppConfig:
         web_data=_resolve(outputs.get("web_data", "web/data.js")),
     )
 
-    deepseek_cfg = agent_cfg.get("deepseek") or {}
-    api_key = os.environ.get(deepseek_cfg.get("api_key_env", "DEEPSEEK_API_KEY"), "")
+    deepseek_cfg = dict(agent_cfg.get("deepseek") or {})
+    # .env 可覆盖端点与模型：换服务商不用改 yaml
+    if os.environ.get("LLM_BASE_URL"):
+        deepseek_cfg["base_url"] = os.environ["LLM_BASE_URL"]
+    if os.environ.get("LLM_MODEL"):
+        deepseek_cfg["model"] = os.environ["LLM_MODEL"]
+    api_key = (
+        os.environ.get(deepseek_cfg.get("api_key_env", "DEEPSEEK_API_KEY"), "")
+        or os.environ.get("LLM_API_KEY", "")
+    )
 
     return AppConfig(
         provider=agent_cfg.get("provider", "scripted"),

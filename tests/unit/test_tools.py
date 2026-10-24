@@ -24,7 +24,7 @@ def test_query_db_reads_secret_table_when_unguarded():
 def test_send_message_records_outbox():
     tools.reset_session()
     res = tools.send_message("客服组", "hi")
-    assert res.ok and tools.OUTBOX[-1]["to"] == "客服组"
+    assert res.ok and tools.get_outbox()[-1]["to"] == "客服组"
 
 
 def test_http_get_never_hits_network():

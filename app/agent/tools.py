@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 import re
 import sqlite3
+import threading
 from dataclasses import dataclass, field
 from pathlib import Path
 from urllib.parse import urlparse
@@ -79,7 +80,7 @@ def send_message(to: str, body: str) -> ToolResult:
     """发送消息。工具层只记录，不做收件人白名单与内容检查。"""
     if not to:
         return ToolResult(False, error="missing recipient")
-    OUTBOX.append({"to": to, "body": body})
+    _outbox().append({"to": to, "body": body})
     return ToolResult(True, content=f"已发送给 {to}（{len(body)} 字）", meta={"to": to})
 
 
@@ -96,8 +97,18 @@ def http_get(url: str) -> ToolResult:
     return ToolResult(True, content=f"HTTP 200 {host}\n{body}", meta={"host": host})
 
 
-# 单次运行的发送记录（runner 读取后清空，避免跨用例串味）
-OUTBOX: list[dict] = []
+# 单次运行的发送记录：按线程隔离，评测并发时不会串味
+_local = threading.local()
+
+
+def _outbox() -> list[dict]:
+    if not hasattr(_local, "outbox"):
+        _local.outbox = []
+    return _local.outbox
+
+
+def get_outbox() -> list[dict]:
+    return list(_outbox())
 
 TOOLS = {
     "read_file": read_file,
@@ -127,7 +138,7 @@ def call(name: str, args: dict) -> ToolResult:
 
 
 def reset_session() -> None:
-    OUTBOX.clear()
+    _local.outbox = []
 
 
 def mask_secrets(text: str) -> tuple[str, int]:

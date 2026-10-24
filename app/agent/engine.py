@@ -86,7 +86,7 @@ def run_case(
         engine=used,
         steps=list(state.get("steps", [])),
         answer=state.get("answer", ""),
-        outbox=list(tools.OUTBOX),
+        outbox=tools.get_outbox(),
         blocks=list(stack.blocks),
         masked=int(state.get("masked", 0)),
         elapsed_ms=elapsed,
