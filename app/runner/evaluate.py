@@ -56,11 +56,16 @@ def main() -> None:
     parser.add_argument("--config", default="", help="只跑指定配置（baseline / hardened / no_gate …）")
     parser.add_argument("--provider", default="", help="scripted / ollama / deepseek")
     parser.add_argument("--model", default="", help="覆盖模型名")
+    parser.add_argument("--base-url", default="", help="覆盖 OpenAI 兼容端点，如 https://token.wasu.cn/v1")
+    parser.add_argument("--api-key", default="", help="覆盖 API Key（优先于 .env）")
     parser.add_argument("--engine", default="auto", choices=["auto", "langgraph", "linear"])
     parser.add_argument("--limit", type=int, default=0, help="每个类型只跑前 N 条（冒烟用）")
     parser.add_argument("--no-store", action="store_true", help="不写 SQLite")
     parser.add_argument("--workers", type=int, default=1, help="并发用例数（远程模型建议 6-10）")
     parser.add_argument("--timeout", type=int, default=0, help="单次模型调用超时秒数")
+    parser.add_argument("--tag", default="", help="产物后缀：bench-<tag>.md / summary-<tag>.json")
+    parser.add_argument("--configs", default="", help="只跑这几个配置，逗号分隔，如 baseline,hardened")
+    parser.add_argument("--rpm", type=int, default=0, help="每分钟模型请求上限（网关限流用，0 表示不限）")
     args = parser.parse_args()
 
     ensure_runtime_dirs()
@@ -71,8 +76,14 @@ def main() -> None:
     kwargs = cfg.provider_kwargs()
     if args.model:
         kwargs["model"] = args.model
+    if args.base_url:
+        kwargs["base_url"] = args.base_url
+    if args.api_key:
+        kwargs["api_key"] = args.api_key
     if args.timeout:
         kwargs["timeout"] = args.timeout
+    if args.rpm:
+        kwargs["rpm"] = args.rpm
     provider = get_provider(provider_name, **kwargs)
     system = load_prompt("agent_system")
 
@@ -91,6 +102,12 @@ def main() -> None:
     configs = build_configs(cfg.evaluation.matrix)
     if args.config:
         configs = {args.config: configs[args.config]}
+    if args.configs:
+        want = [c.strip() for c in args.configs.split(",") if c.strip()]
+        unknown = [c for c in want if c not in configs]
+        if unknown:
+            raise SystemExit(f"未知配置：{unknown}，可选：{list(configs)}")
+        configs = {c: configs[c] for c in want}
 
     log.info(
         "provider=%s engine=%s 用例=%d 攻击 / %d 正常 配置=%s",
@@ -159,7 +176,9 @@ def main() -> None:
                 }
             records.append(record)
             done_jobs += 1
-            if record.get("success"):
+            if str(record.get("reason", "")).startswith("运行异常"):
+                flag = "ERR "  # 单条失败要显眼，不能混进 safe
+            elif record.get("success"):
                 flag = "HIT "
             elif record.get("benign_ok"):
                 flag = "ok  "
@@ -204,7 +223,7 @@ def main() -> None:
             for case in attacks
         ],
     }
-    write_outputs(cfg, payload)
+    write_outputs(cfg, payload, args.tag)
 
     log.info("完成：%d 次运行，耗时 %.1fs", len(records), wall)
     print_console(summary, marg)
@@ -224,10 +243,11 @@ def print_console(summary: dict, marg: list[dict]) -> None:
             print(f"  {row['name']:<10} +{row['delta']:>5.1f} pp   误杀 {row['benign_without']:.0f}% → {row['benign_with']:.0f}%")
 
 
-def write_outputs(cfg, payload: dict) -> None:
+def write_outputs(cfg, payload: dict, tag: str = "") -> None:
     reports = cfg.evaluation.reports_dir
     reports.mkdir(parents=True, exist_ok=True)
-    (reports / "summary.json").write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    suffix = f"-{tag}" if tag else ""
+    (reports / f"summary{suffix}.json").write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
 
     meta = payload["meta"]
     summary = payload["configs"]
@@ -293,12 +313,14 @@ def write_outputs(cfg, payload: dict) -> None:
         "- ⑤ 只覆盖外发通道，**回答本身**的敏感内容泄露仍由模型侧与 ① 负责，这一层没有兜底。",
         "- 用例集为合成载荷，未覆盖多模态、文件附件、编码混淆等更复杂的注入形态。",
     ]
-    (reports / "bench.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
+    (reports / f"bench{suffix}.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
 
     web_data = cfg.evaluation.web_data
+    if tag:
+        web_data = web_data.with_name(f"data{suffix}.js")
     web_data.parent.mkdir(parents=True, exist_ok=True)
     web_data.write_text("window.DATA = " + json.dumps(payload, ensure_ascii=False) + ";\n", encoding="utf-8")
-    print(f"\n报告：{rel(reports / 'bench.md')} · 看板数据：{rel(web_data)}")
+    print(f"\n报告：{rel(reports / f'bench{suffix}.md')} · 看板数据：{rel(web_data)}")
 
 
 if __name__ == "__main__":

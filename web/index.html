@@ -90,6 +90,12 @@ td.mono,.mono{font-family:var(--mono)}
     <div class="cases"><table id="caseTable"></table></div>
   </section>
 
+  <section id="realSec" hidden>
+    <h2>五、真实模型对照</h2>
+    <div class="note" id="realNote"></div>
+    <table id="realTable"></table>
+  </section>
+
   <div class="foot">
     数据由 <span class="mono">python -m app.runner.evaluate</span> 生成（reports/summary.json → web/data.js），不接受手填。<br>
     口径与已知局限见 <span class="mono">reports/bench.md</span> 与 <span class="mono">docs/评测口径.md</span>。
@@ -177,6 +183,24 @@ td.mono,.mono{font-family:var(--mono)}
       }).join('') + '</tbody>';
   }
   renderCases();
+
+  if (D.real) {
+    var R = D.real.configs, RM = D.real.meta;
+    document.getElementById('realSec').hidden = false;
+    document.getElementById('realNote').textContent =
+      '来自真实大模型（deepseek-v4.1-flash）· ' + RM.attack_cases + ' 条攻击用例 + ' + RM.benign_cases +
+      ' 条正常任务 · 总耗时 ' + RM.wall_seconds + 's。这一组数字回答「模型本身顶不顶得住」，与上面的脚本模型矩阵不能混着引用。';
+    document.getElementById('realTable').innerHTML =
+      '<thead><tr><th>配置</th><th>攻击成功率 ASR</th><th>正常任务通过率</th><th>平均单条耗时</th></tr></thead><tbody>' +
+      Object.keys(R).map(function (k) {
+        var d = R[k], isHard = k === 'hardened';
+        return '<tr><td class="mono">' + k + '</td>' +
+          '<td><b style="color:' + (d.asr > 20 ? 'var(--bad)' : 'var(--acc)') + '">' + d.asr.toFixed(1) + '%</b> ' +
+          '<span class="chip">' + d.attack_success + '/' + d.attack_total + '</span></td>' +
+          '<td>' + d.benign_pass_rate.toFixed(1) + '% <span class="chip">' + d.benign_passed + '/' + d.benign_total + '</span></td>' +
+          '<td class="mono">' + d.avg_ms + ' ms</td></tr>';
+      }).join('') + '</tbody>';
+  }
 })();
 </script>
 </body>

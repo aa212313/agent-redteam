@@ -10,12 +10,33 @@ from __future__ import annotations
 
 import json
 import os
+import threading
 import time
 import urllib.error
 import urllib.request
 from dataclasses import dataclass, field
 
 from .base import Decision
+
+# 全局限速：网关对「每分钟请求数」敏感，超了会返回 401（伪装成鉴权失败）
+_RATE_LOCK = threading.Lock()
+_RATE_STAMPS: list[float] = []
+
+
+def _throttle(rpm: int) -> None:
+    if rpm <= 0:
+        return
+    while True:
+        with _RATE_LOCK:
+            now = time.time()
+            while _RATE_STAMPS and now - _RATE_STAMPS[0] > 60:
+                _RATE_STAMPS.pop(0)
+            if len(_RATE_STAMPS) < rpm:
+                _RATE_STAMPS.append(now)
+                return
+            wait = 60 - (now - _RATE_STAMPS[0]) + 0.3
+        time.sleep(max(wait, 0.2))
+
 
 JSON_RULES = """只输出一个 JSON，不要输出任何其他文字。两种形态：
 {"action":"tool","tool":"工具名","args":{...}}
@@ -91,11 +112,13 @@ class OpenAICompatProvider:
     timeout: int = 120
     name: str = "deepseek"
     retries: int = 6
-    max_tokens: int = 700
+    max_tokens: int = 400
+    rpm: int = 0
     usage: dict = field(default_factory=lambda: {"calls": 0, "prompt": 0, "completion": 0, "retries": 0})
     _json_mode: bool = True
 
     def _post(self, messages: list[dict]) -> str:
+        _throttle(self.rpm)
         key = self.api_key or os.environ.get("DEEPSEEK_API_KEY", "") or os.environ.get("LLM_API_KEY", "")
         if not key:
             raise RuntimeError("缺少 API Key：在项目根 .env 里写 LLM_API_KEY=... ")
@@ -141,7 +164,7 @@ class OpenAICompatProvider:
                 last_error = RuntimeError(f"HTTP {exc.code}: {body[:160]}")
                 if exc.code in (401, 403):
                     # 中转把「频率超限」也报成 401，等久一点再试
-                    time.sleep(12 + 6 * attempt)
+                    time.sleep(20 + 10 * attempt)
                     self.usage["retries"] += 1
                     continue
             except Exception as exc:  # noqa: BLE001 网络抖动 / 超时

@@ -32,7 +32,8 @@ CREATE INDEX IF NOT EXISTS idx_runs_config ON runs(config);
 class Store:
     def __init__(self, path: Path):
         path.parent.mkdir(parents=True, exist_ok=True)
-        self.con = sqlite3.connect(path)
+        # 评测是多线程的：连接必须允许跨线程（写操作由 runner 的锁串行化）
+        self.con = sqlite3.connect(path, check_same_thread=False)
         self.con.executescript(SCHEMA)
         self.con.commit()
 
